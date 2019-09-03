@@ -1,3 +1,8 @@
+// Copyright (c) 2019, Benjamin Shields. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Package tftp implements the Trivial File Transfer Protocol as defined in RFC 1350.
 package tftp
 
 import (
@@ -6,7 +11,7 @@ import (
 )
 
 type Handler struct {
-	// requestReader listens for new packets from a client.
+	// packetReader listens for new packets from a client.
 	packetReader *Conn
 
 	// Client is a pointer to the client being served by this handler.

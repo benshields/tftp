@@ -1,3 +1,8 @@
+// Copyright (c) 2019, Benjamin Shields. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Package tftp implements the Trivial File Transfer Protocol as defined in RFC 1350.
 package tftp
 
 import "net"
@@ -22,5 +27,8 @@ func NewClient(request Packet) *Client {
 
 func (client *Client) setup() error {
 	// TODO: setup the fileHandler
+
+	// TODO: figure out if it's a RRQ or WRQ
+
 	return nil
 }
