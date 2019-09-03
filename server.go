@@ -5,45 +5,106 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"time"
 )
 
 type Server struct {
+	// Root is the full path name to the directory that Server will read
+	// files from and write files to.
+	Root string
+
+	// Addr is the address the server will listen on for new Read and Write
+	// requests. The default value is ":tftp".
+	Addr string
+
 	// ErrorLog specifies an optional logger for errors setting
 	// connections, unexpected behavior from handlers, and
 	// underlying FileSystem errors.
 	// If nil, logging is done via the log package's standard logger.
 	ErrorLog *log.Logger // Go 1.3
 
+	// requestReader listens on Addr for new Read and Write requests.
+	requestReader *Conn
+
 	// numActiveConnections is used to wait for connections to finish
-	// during graceful shutdown.
+	// during graceful shutdown. It is incremented upon receiving a
+	// new request packet, and decremented after a client connection
+	// closes.
 	numActiveConns int
+}
+
+func NewServer(root, addr string, errorLog *log.Logger) *Server {
+	srv := &Server{
+		Root:           root,
+		Addr:           addr,
+		ErrorLog:       errorLog,
+		numActiveConns: 0,
+	}
+	return srv
+}
+
+// setup prepares a new server value for use by:
+// - changing its Root directory
+// - setting up a connection to listen for requests on its address
+// - writing an initial log statement.
+func (srv *Server) setup() error {
+	err := srv.changeDir()
+	if err != nil {
+		return err
+	}
+
+	err = srv.setupRequestReader()
+	if err != nil {
+		return err
+	}
+
+	srv.initializeLogger()
+
+	return nil
+}
+
+func (srv *Server) changeDir() error {
+	return os.Chdir(srv.Root)
+}
+
+func (srv *Server) setupRequestReader() error {
+	conn, err := NewConn(srv.Addr)
+	if err != nil {
+		return err
+	}
+	srv.requestReader = conn
+	return nil
+}
+
+func (srv *Server) initializeLogger() {
+	srv.logf("tftp: starting server...\n\tRoot:\t%v\n\tRoot:\t%v", srv.Root, srv.Addr)
 }
 
 func (srv *Server) Serve(cancelChan <-chan CancelType) <-chan error {
 	// create a channel to send errors back to caller (so that this routine can be cancelled)
 	done := make(chan error)
 	go func() {
-		ctxSrv, cancelRequestReader := context.WithCancel(context.Background())
-		requestReader, err := NewConn(":tftp")
+		err := srv.setup()
 		if err != nil {
 			done <- err
 			return
 		}
-		requests := requestReader.ReadContinuously(ctxSrv)
+		ctxSrv, cancelServer := context.WithCancel(context.Background())
+		requests := srv.requestReader.ReadContinuously(ctxSrv)
 		connDone := make(chan error)
 		for {
 			select {
 			case request := <-requests:
-				go HandleRequest(ctxSrv, request, connDone)
 				srv.numActiveConns++
+				go HandleRequest(ctxSrv, request, connDone)
 			case err := <-connDone:
 				if err != nil {
 					srv.logf("tftp: connection finished with error - %v\n", err)
 				}
 				srv.numActiveConns--
 			case cancelType := <-cancelChan:
-				cancelRequestReader()
+				cancelServer()
 				done <- srv.cancel(cancelType)
 				return
 			}
