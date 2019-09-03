@@ -2,7 +2,7 @@ package tftp
 
 import "context"
 
-func HandleRequest(ctx context.Context, request Request, done chan<- error) {
+func HandleRequest(ctx context.Context, request Packet, done chan<- error) {
 	clientReader, err := NewConn("127.0.0.1:0") // :0 tells the OS to assign an ephemeral port
 	if err != nil {
 		done <- err
@@ -26,8 +26,8 @@ func HandleRequest(ctx context.Context, request Request, done chan<- error) {
 }
 
 // TODO: I think this should become its own type and file
-func NewHandler(ctx context.Context, request Request, out chan<- error) chan<- Request {
-	in := make(chan Request)
+func NewHandler(ctx context.Context, request Packet, out chan<- error) chan<- Packet {
+	in := make(chan Packet)
 	go func() {
 
 		for {
@@ -42,6 +42,6 @@ func NewHandler(ctx context.Context, request Request, out chan<- error) chan<- R
 	return in
 }
 
-func handle(request Request) {
+func handle(request Packet) {
 	/* TODO This is a dummy function */
 }

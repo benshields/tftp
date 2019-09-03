@@ -33,8 +33,8 @@ func NewConn(addr string) (*Conn, error) {
 	return c, nil
 }
 
-func (c *Conn) Read(ctx context.Context) <-chan Request {
-	out := make(chan Request)
+func (c *Conn) Read(ctx context.Context) <-chan Packet {
+	out := make(chan Packet)
 	go func() {
 		n, addr, err := c.rwc.ReadFrom(c.buffer) // this call blocks
 		data := make([]byte, n)
@@ -42,19 +42,19 @@ func (c *Conn) Read(ctx context.Context) <-chan Request {
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				out <- Request{addr, data, ctx.Err()} // read cancelled
+				out <- Packet{addr, data, ctx.Err()} // read cancelled
 			default:
-				out <- Request{addr, data, err} // read failure
+				out <- Packet{addr, data, err} // read failure
 			}
 
 		}
-		out <- Request{addr, data, nil} // read success
+		out <- Packet{addr, data, nil} // read success
 	}()
 	return out
 }
 
-func (c *Conn) ReadContinuously(ctx context.Context) <-chan Request {
-	out := make(chan Request)
+func (c *Conn) ReadContinuously(ctx context.Context) <-chan Packet {
+	out := make(chan Packet)
 	go func() {
 		for {
 			select {
@@ -66,7 +66,7 @@ func (c *Conn) ReadContinuously(ctx context.Context) <-chan Request {
 			case <-ctx.Done():
 				err := c.rwc.Close()
 				if err != nil {
-					out <- Request{nil, nil, err} // refactor to handle this error gracefully!
+					out <- Packet{nil, nil, err} // refactor to handle this error gracefully!
 				}
 			default:
 			}
