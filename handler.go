@@ -8,6 +8,9 @@ import (
 type Handler struct {
 	// requestReader listens for new packets from a client.
 	packetReader *Conn
+
+	// Client is a pointer to the client being served by this handler.
+	*Client
 }
 
 func HandleRequest(ctx context.Context, request Packet, done chan<- error) {
@@ -22,7 +25,8 @@ func HandleRequest(ctx context.Context, request Packet, done chan<- error) {
 }
 
 func NewHandler(request Packet) *Handler {
-	handler := &Handler{}
+	c := NewClient(request)
+	handler := &Handler{Client: c}
 	return handler
 }
 
@@ -31,7 +35,10 @@ func (handler *Handler) setup() error {
 	if err != nil {
 		return err
 	}
-
+	err = handler.Client.setup()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -45,11 +52,11 @@ func (handler *Handler) setupPacketReader() error {
 }
 
 func (handler *Handler) Start(ctx context.Context) <-chan error {
-	out := make(chan error)
+	done := make(chan error)
 	go func() {
 		err := handler.setup()
 		if err != nil {
-			out <- err
+			done <- err
 			// TODO call some handler cleanup func?
 			return
 		}
@@ -65,13 +72,13 @@ func (handler *Handler) Start(ctx context.Context) <-chan error {
 				/*// this needs to be deferred
 				err = clientReader.rwc.Close()
 				if err != nil {
-					out <- err
+					done <- err
 				}*/
 				return
 			}
 		}
 	}()
-	return out
+	return done
 }
 
 func (handler *Handler) Handle(request Packet) {
