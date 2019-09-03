@@ -3,6 +3,7 @@
     <words>
       <w>blocksize</w>
       <w>conns</w>
+      <w>netascii</w>
       <w>tftp</w>
     </words>
   </dictionary>
