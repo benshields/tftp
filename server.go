@@ -2,6 +2,7 @@ package tftp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -49,6 +50,28 @@ func (srv *Server) Serve(cancelChan <-chan CancelType) <-chan error {
 		}
 	}()
 	return done
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type CloseType error
+
+var (
+	ShutdownGracefully  CloseType = errors.New("ShutdownGracefully")
+	ShutdownWithTimeout CloseType = errors.New("ShutdownWithTimeout")
+	ShutdownImmediately CloseType = errors.New("ShutdownImmediately")
+)
+
+type CancelType struct {
+	CloseType
+	time.Duration
+}
+
+func Cancellation(closeType CloseType, duration time.Duration) CancelType {
+	return CancelType{
+		CloseType: closeType,
+		Duration:  duration,
+	}
 }
 
 func (srv *Server) cancel(cancel CancelType) error {
