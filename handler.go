@@ -35,7 +35,7 @@ func NewHandler(request Packet) *Handler {
 	return handler
 }
 
-func (handler *Handler) setup() error {
+func (handler *Handler) setup() error { // setup() is an instance of Sequential coupling...
 	err := handler.setupPacketReader()
 	if err != nil {
 		return err

@@ -53,7 +53,7 @@ func NewServer(root, addr string, errorLog *log.Logger) *Server {
 // - changing its Root directory
 // - setting up a connection to listen for requests on its address
 // - writing an initial log statement.
-func (srv *Server) setup() error {
+func (srv *Server) setup() error { // setup() is an instance of Sequential coupling...
 	err := srv.changeDir()
 	if err != nil {
 		return err
