@@ -10,10 +10,6 @@ import (
 	"net"
 )
 
-// bufferSize defines the size of buffer used to listen for TFTP read and write requests. This accommodates the
-// standard Ethernet MTU blocksize (1500 bytes) minus headers of TFTP (4 bytes), UDP (8 bytes) and IP (20 bytes).
-const bufferSize = 1468
-
 type Conn struct {
 	// rwc is the underlying network connection.
 	// This is never wrapped by other types and is the value given out

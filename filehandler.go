@@ -11,8 +11,11 @@ import (
 	"os"
 )
 
-// readWriteCloser is the type that must be implemented by the handler of the client type.
-type readWriteCloser io.ReadWriteCloser
+// fileHandler is the type that must be implemented by the handler of the client type.
+type fileHandler interface {
+	Open() error
+	io.ReadWriteCloser
+}
 
 // openFlag controls behavior of opening a file with a blockStreamer.
 type openFlag int
@@ -59,6 +62,21 @@ func newBlockStreamer(filename string, openFlag openFlag, encFlag encodingFlag) 
 
 func (fh blockStreamer) Open() error {
 	/* TODO: Implement func (fh blockStreamer) open(filename, mode string) error */
+	var err error
+	switch fh.openMode {
+	case read:
+		fh.fileReference, err = os.OpenFile(fh.filename, os.O_RDONLY, os.ModeExclusive)
+		if err != nil {
+			return err
+		}
+		fh.buffer = bufio.NewReadWriter(bufio.NewReader(fh.fileReference), nil)
+	case write:
+		fh.fileReference, err = os.OpenFile(fh.filename, os.O_CREATE|os.O_APPEND|os.O_WRONLY, os.ModeExclusive|os.ModeAppend)
+		if err != nil {
+			return err
+		}
+		fh.buffer = bufio.NewReadWriter(nil, bufio.NewWriter(fh.fileReference))
+	}
 	return nil
 }
 

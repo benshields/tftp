@@ -7,7 +7,6 @@ package tftp
 
 import (
 	"context"
-	"time"
 )
 
 type Handler struct {
@@ -38,11 +37,11 @@ func NewHandler(request Packet) *Handler {
 func (handler *Handler) setup() error { // setup() is an instance of Sequential coupling...
 	err := handler.setupPacketReader()
 	if err != nil {
-		return err
+		return err // TODO make some error packet to return, internal server error, and log
 	}
-	err = handler.Client.setup()
+	err = handler.Client.setupFileHandler()
 	if err != nil {
-		return err
+		return err // TODO make some error packet to return, incorrectly formed packet or fail to open file?, and log
 	}
 	return nil
 }
@@ -60,32 +59,48 @@ func (handler *Handler) Start(ctx context.Context) <-chan error {
 	done := make(chan error)
 	go func() {
 		err := handler.setup()
-		if err != nil {
-			done <- err
-			// TODO call some handler cleanup func?
-			return
-		}
-		for {
-			ctxTimeout, _ := context.WithTimeout(ctx, 5*time.Second)
-			in := handler.packetReader.Read(ctxTimeout)
-			select {
-			case packet := <-in:
-				go handler.Handle(packet)
-			case <-ctx.Done():
-				// TODO should I close packetReader here? Send an error packet to client?
-				// TODO call some handler cleanup func?
-				/*// this needs to be deferred
-				err = clientReader.rwc.Close()
-				if err != nil {
-					done <- err
-				}*/
+		_ = handler.sendPacket(backupError().data) // TODO unhandled error
+		// JUST BECAUSE I WANT TO TEST OUT SENDING ONE ERROR REPLY AND BREAKING THE CONNECTION
+		done <- err
+		// TODO call some handler cleanup func? Then dally. Any cleanup I'm forgetting? logging?
+		return
+		// JUST BECAUSE I WANT TO TEST OUT SENDING ONE ERROR REPLY AND BREAKING THE CONNECTION
+		/*
+			if err != nil {
+				// TODO send error packet
+				_ = handler.sendPacket(backupError().data) // TODO unhandled error
+				done <- err
+				// TODO call some handler cleanup func? Then dally. Any cleanup I'm forgetting? logging?
 				return
 			}
-		}
+			// TODO send first response
+			for {
+				ctxTimeout, _ := context.WithTimeout(ctx, 5*time.Second)
+				in := handler.packetReader.Read(ctxTimeout)
+				select {
+				case packet := <-in:
+					go handler.Handle(packet) // TODO this is a dummy func
+				case <-ctx.Done():
+					// TODO should I close packetReader here? Send an error packet to client?
+					// TODO call some handler cleanup func? Then dally. Any cleanup I'm forgetting? logging?
+					//// this needs to be deferred
+					//err = clientReader.rwc.Close()
+					//if err != nil {
+					//	done <- err
+					//}
+					return
+				}
+			}*/
 	}()
 	return done
 }
 
 func (handler *Handler) Handle(request Packet) {
 	/* TODO This is a dummy function */
+}
+
+// TODO this is a horrible placeholder
+func (handler *Handler) sendPacket(pak []byte) error {
+	_, err := handler.packetReader.rwc.WriteTo(pak, handler.Client.remoteAddr)
+	return err
 }

@@ -19,7 +19,7 @@ type Client struct {
 	remoteAddr net.Addr
 
 	// handler interfaces with the file that the client is reading from or writing to.
-	fileHandler readWriteCloser
+	fileHandler
 }
 
 func NewClient(request Packet) *Client {
@@ -28,25 +28,13 @@ func NewClient(request Packet) *Client {
 	return c
 }
 
-func (client *Client) setup() error { // setup() is an instance of Sequential coupling...
-	// TODO: setup the fileHandler
-
-	// TODO: figure out if it's a RRQ or WRQ
-	requestType, err := client.lastPacket.readOpCode()
+func (client *Client) setupFileHandler() error { // setupFileHandler() is an instance of Sequential coupling...
+	req, err := parseRequestPacket(client.lastPacket)
 	if err != nil {
-		return err
-	}
-	switch requestType {
-	case RRQ:
-		// setup a new filehandler
-	case WRQ:
-		// setup a new filehandler
-	default:
-		// TODO send an error packet back
-		badRequestError := fmt.Errorf("%v: expected opcode matching RRQ(%v) or WRQ(%v), found %v",
-			errOperation.errorMsg.Error(), RRQ, WRQ, requestType)
+		badRequestError := fmt.Errorf("%v: error occurred while reading opcode in Request packet from %v - %v",
+			errNotDef.errorMsg.Error(), client.lastPacket.from, err)
 		return badRequestError
 	}
-
-	return nil
+	client.fileHandler = newBlockStreamer(req.filename, req.openFlag, req.encodingFlag)
+	return client.fileHandler.Open()
 }

@@ -95,7 +95,8 @@ func (srv *Server) Serve(cancelChan <-chan CancelType) <-chan error {
 			done <- err
 			return
 		}
-		ctxSrv, cancelServer := context.WithCancel(context.Background())
+		ctxSrv := context.WithValue(context.Background(), LoggerContextKey, srv.ErrorLog)
+		ctxSrv, cancelServer := context.WithCancel(ctxSrv)
 		requests := srv.requestReader.ReadContinuously(ctxSrv)
 		connDone := make(chan error)
 		for {
@@ -170,3 +171,19 @@ func (srv *Server) logf(format string, args ...interface{}) {
 		log.Printf(format, args...)
 	}
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// contextKey is a value for use with context.WithValue. It's used as
+// a pointer so it fits in an interface{} without allocation.
+type contextKey struct {
+	name string
+}
+
+var (
+	// ServerContextKey is a context key. It can be used in TFTP
+	// handlers with context.WithValue to access the server's
+	// logger. The associated value will be of
+	// type *log.Logger.
+	LoggerContextKey = &contextKey{"tftp-logger"}
+)

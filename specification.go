@@ -10,6 +10,19 @@ import (
 	"fmt"
 )
 
+// bufferSize defines the size of buffer used to listen for TFTP read and write requests. This accommodates the
+// standard Ethernet MTU blocksize (1500 bytes) minus headers of TFTP (4 bytes), UDP (8 bytes) and IP (20 bytes).
+const bufferSize = 1468
+
+const sizeOfOpCode = 2
+
+// bufferSize defines the minimum size of a TFTP Read Request or Write Request packet. This accommodates the
+// opCode (2 bytes) plus filename (2 bytes) plus mode (2 bytes). The filename and mode are at least 1 byte and
+// are also terminated by a null byte.
+const minRequestPacketSize = 6
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // opCode specifies one of the five types of packets supported by TFTP. OpCodes are two bytes with values from 1 to 5.
 type opCode uint16
 
@@ -30,7 +43,17 @@ var (
 
 type tftpError struct {
 	errorCode uint16
-	errorMsg  error
+	errorMsg  error // TODO should this just be a string?
+}
+
+func (e tftpError) fmt(format string, a ...interface{}) tftpError {
+	fmtMsg := fmt.Sprintf(format, a...)
+	fmtErr := errors.New(e.errorMsg.Error() + ": " + fmtMsg)
+	formattedError := tftpError{
+		errorCode: e.errorCode,
+		errorMsg:  fmtErr,
+	}
+	return formattedError
 }
 
 func (e tftpError) Error() string {
