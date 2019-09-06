@@ -58,8 +58,9 @@ func (c *Conn) ReadContinuously(ctx context.Context) <-chan Packet {
 	out := make(chan Packet)
 	go func() {
 		for {
+			in := c.Read(ctx)
 			select {
-			case request := <-c.Read(ctx):
+			case request := <-in:
 				if request.error == context.Canceled {
 					return
 				}
@@ -69,7 +70,6 @@ func (c *Conn) ReadContinuously(ctx context.Context) <-chan Packet {
 				if err != nil {
 					out <- Packet{nil, nil, err} // refactor to handle this error gracefully!
 				}
-			default:
 			}
 		}
 	}()

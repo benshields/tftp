@@ -168,12 +168,13 @@ func errorPacketSize(err tftpError) int {
 }
 
 func backupError() ErrorPacket {
-	msg := []byte("frick!")
-	backup := append([]byte{0x00, 0x04}, msg...)
+	msg := []byte("server not implemented")
+	backup := append([]byte{0x00, 0x05, 0x00, 0x01}, msg...)
+	backup = append(backup, 0x00)
 	foo := ErrorPacket{
 		tftpError: tftpError{
 			errorCode: 0,
-			errorMsg:  errors.New("frick!"),
+			errorMsg:  errors.New("server not implemented"),
 		},
 		data: backup,
 	}

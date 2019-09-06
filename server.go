@@ -102,6 +102,7 @@ func (srv *Server) Serve(cancelChan <-chan CancelType) <-chan error {
 		for {
 			select {
 			case request := <-requests:
+				srv.logf("tftp: new request received:\n\tfrom: %v\n\tdata: %v\n", request.from, request.data)
 				srv.numActiveConns++
 				go HandleRequest(ctxSrv, request, connDone)
 			case err := <-connDone:

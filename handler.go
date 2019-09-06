@@ -7,6 +7,8 @@ package tftp
 
 import (
 	"context"
+	"fmt"
+	"log"
 )
 
 type Handler struct {
@@ -39,17 +41,18 @@ func (handler *Handler) setup() error { // setup() is an instance of Sequential 
 	if err != nil {
 		return err // TODO make some error packet to return, internal server error, and log
 	}
-	err = handler.Client.setupFileHandler()
-	if err != nil {
-		return err // TODO make some error packet to return, incorrectly formed packet or fail to open file?, and log
-	}
+	//err = handler.Client.setupFileHandler()
+	//if err != nil {
+	//	return err // TODO make some error packet to return, incorrectly formed packet or fail to open file?, and log
+	//}
 	return nil
 }
 
 func (handler *Handler) setupPacketReader() error {
-	conn, err := NewConn("127.0.0.1:0") // :0 tells the OS to assign an ephemeral port
+	//conn, err := NewConn("127.0.0.1:0") // :0 tells the OS to assign an ephemeral port
+	conn, err := NewConn(":0") // TODO this is a test
 	if err != nil {
-		return err
+		return fmt.Errorf("func (handler *Handler) setupPacketReader() error:: %v", err)
 	}
 	handler.packetReader = conn
 	return nil
@@ -59,7 +62,11 @@ func (handler *Handler) Start(ctx context.Context) <-chan error {
 	done := make(chan error)
 	go func() {
 		err := handler.setup()
-		_ = handler.sendPacket(backupError().data) // TODO unhandled error
+		if err != nil {
+			done <- err
+			return
+		}
+		err = handler.sendPacket(backupError().data) // TODO unhandled error
 		// JUST BECAUSE I WANT TO TEST OUT SENDING ONE ERROR REPLY AND BREAKING THE CONNECTION
 		done <- err
 		// TODO call some handler cleanup func? Then dally. Any cleanup I'm forgetting? logging?
@@ -102,5 +109,9 @@ func (handler *Handler) Handle(request Packet) {
 // TODO this is a horrible placeholder
 func (handler *Handler) sendPacket(pak []byte) error {
 	_, err := handler.packetReader.rwc.WriteTo(pak, handler.Client.remoteAddr)
-	return err
+	if err != nil {
+		return fmt.Errorf("func (handler *Handler) sendPacket(pak []byte) error:: %v", err)
+	}
+	log.Printf("sendPacket():\n\tto:   %v\n\tdata: %v\n", handler.Client.remoteAddr, pak)
+	return nil
 }
