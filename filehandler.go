@@ -81,8 +81,13 @@ func (fh blockStreamer) Open() error {
 }
 
 func (fh blockStreamer) Close() error {
-	/* TODO: Implement func (fh blockStreamer) close() error */
-	return nil
+	if fh.openMode == write {
+		err := fh.buffer.Flush()
+		if err != nil {
+			return err
+		}
+	}
+	return fh.fileReference.Close()
 }
 
 func (fh blockStreamer) Read(b []byte) (n int, err error) {

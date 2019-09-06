@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 )
@@ -127,6 +128,94 @@ func modeToEncodingFlag(mode string) (encodingFlag, error) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// DataPacket is generated from a DATA packet as defined in RFC 1350.
+type DataPacket struct {
+	blockNumber uint16
+	data        []byte
+}
+
+// parseDataPacket parses the packet into the fields of
+// the returned DataPacket. If the packet is not correctly
+// formed, an error is returned explaining why.
+func parseDataPacket(packet Packet) (*DataPacket, error) {
+	err := packet.readDataOpCode()
+	if err != nil {
+		return nil, err
+	}
+	blockNumber, err := packet.readBlockNumber()
+	if err != nil {
+		return nil, err
+	}
+	data, err := packet.readData()
+	if err != nil {
+		return nil, err
+	}
+	dataPacket := &DataPacket{
+		blockNumber: blockNumber,
+		data:        data,
+	}
+	return dataPacket, nil
+}
+
+func (packet Packet) readDataOpCode() error {
+	op, err := packet.readOpCode()
+	if err != nil {
+		return err
+	}
+	if op != DATA {
+		return errOperation
+	}
+	return nil
+}
+
+func (packet Packet) readBlockNumber() (uint16, error) {
+	bytesReader := bytes.NewReader(packet.data)
+	var blockNumber uint16
+	offset, err := binarySize(DATA)
+	if err != nil {
+		return blockNumber, err
+	}
+	if _, err := bytesReader.Seek(int64(offset), io.SeekStart); err != nil {
+		return blockNumber, err
+	}
+	if err := binary.Read(bytesReader, binary.BigEndian, &blockNumber); err != nil {
+		return blockNumber, err
+	}
+	return blockNumber, nil
+}
+
+func (packet Packet) readData() ([]byte, error) {
+	bytesReader := bytes.NewReader(packet.data)
+	offset, err := binarySize(DATA, uint16(0))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := bytesReader.Seek(int64(offset), io.SeekStart); err != nil {
+		return nil, err
+	}
+	data := make([]byte, bytesReader.Len())
+	if err := binary.Read(bytesReader, binary.BigEndian, data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func createDataPacket(blockNumber uint16, data []byte) DataPacket {
+	dataPacket := DataPacket{
+		blockNumber: blockNumber,
+		data:        data,
+	}
+	return dataPacket
+}
+
+func (dataPacket DataPacket) bytes() []byte {
+	// FIXME this is where I'm leaving off for today.
+	// Write out the fields using binary.write into something for sendPacket()
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // ErrorPacket represents an Error Packet as defined in RFC 1350.
 type ErrorPacket struct {
 	tftpError
@@ -134,11 +223,13 @@ type ErrorPacket struct {
 }
 
 func createErrorPacket(tftpErr tftpError) (ErrorPacket, error) {
-	size := errorPacketSize(tftpErr)
+	size, err := errorPacketSize(tftpErr)
+	if err != nil {
+		return backupError(), err
+	}
 	data := make([]byte, 0, size)
 	buf := bytes.NewBuffer(data)
 
-	var err error
 	write := func(data interface{}) {
 		if err == nil {
 			err = binary.Write(buf, binary.BigEndian, data)
@@ -163,7 +254,7 @@ func createErrorPacket(tftpErr tftpError) (ErrorPacket, error) {
 	return pak, nil
 }
 
-func errorPacketSize(err tftpError) int {
+func errorPacketSize(err tftpError) (int, error) {
 	return binarySize(ERROR, err.errorCode, err.errorMsg, 0x00)
 }
 
@@ -201,10 +292,16 @@ func (packet Packet) readOpCode() (opCode, error) {
 	return op, nil
 }
 
-func binarySize(a ...interface{}) int {
+func binarySize(a ...interface{}) (int, error) {
 	size := 0
 	for _, v := range a {
-		size += binary.Size(v)
+		sz := binary.Size(v)
+		if sz == -1 {
+			msg := "binarySize: expected a fixed-size value or a slice of fixed-size values, or a pointer to such data"
+			err := fmt.Errorf("%v, found %v\n", msg, v)
+			return -1, err
+		}
+		size += sz
 	}
-	return size
+	return size, nil
 }
