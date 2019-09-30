@@ -21,15 +21,6 @@ type Packet struct {
 	error
 }
 
-/*func (packet Packet) readOpCode() (opCode, error) {
-	var op opCode
-	bytesReader := bytes.NewReader(packet.raw)
-	if err := binary.Read(bytesReader, binary.BigEndian, &op); err != nil {
-		return op, err
-	}
-	return op, nil
-}*/
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // RequestPacket is generated from a RRQ/WRQ packet as defined in RFC 1350.

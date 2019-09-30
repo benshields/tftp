@@ -37,19 +37,19 @@ func NewConn(addr string) (*Conn, error) {
 func (c *Conn) Read(ctx context.Context) <-chan Packet {
 	out := make(chan Packet)
 	go func() {
-		n, addr, err := c.rwc.ReadFrom(c.buffer) // this call blocks
+		n, addr, err := c.rwc.ReadFrom(c.buffer)
 		data := make([]byte, n)
 		copy(data, c.buffer[:n])
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				out <- Packet{addr, data, ctx.Err()} // read cancelled
+				out <- Packet{addr, data, ctx.Err()}
 			default:
-				out <- Packet{addr, data, err} // read failure
+				out <- Packet{addr, data, err}
 			}
 
 		}
-		out <- Packet{addr, data, nil} // read success
+		out <- Packet{addr, data, nil}
 	}()
 	return out
 }
@@ -68,7 +68,7 @@ func (c *Conn) ReadContinuously(ctx context.Context) <-chan Packet {
 			case <-ctx.Done():
 				err := c.rwc.Close()
 				if err != nil {
-					out <- Packet{nil, nil, err} // refactor to handle this error gracefully!
+					out <- Packet{nil, nil, err} // TODO refactor to handle this error gracefully!
 				}
 			}
 		}
