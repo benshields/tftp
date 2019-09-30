@@ -16,7 +16,7 @@ type Conn struct {
 	// to CloseNotifier callers.
 	rwc net.PacketConn
 
-	buffer []byte // buffer holds the data last read from rwc
+	buffer []byte // buffer holds the raw last read from rwc
 
 	localAddr net.Addr // address from which the handler is serving the connection
 }

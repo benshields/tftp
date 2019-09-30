@@ -23,7 +23,7 @@ type Packet struct {
 
 /*func (packet Packet) readOpCode() (opCode, error) {
 	var op opCode
-	bytesReader := bytes.NewReader(packet.data)
+	bytesReader := bytes.NewReader(packet.raw)
 	if err := binary.Read(bytesReader, binary.BigEndian, &op); err != nil {
 		return op, err
 	}
@@ -39,7 +39,7 @@ type RequestPacket struct {
 	encodingFlag        // generated from the mode value
 }
 
-// parseRequestPacket parses the packet's data into the fields of
+// parseRequestPacket parses the packet's raw into the fields of
 // the returned RequestPacket. If the packet is not correctly
 // formed, an error is returned explaining why.
 func parseRequestPacket(packet Packet) (*RequestPacket, error) {
@@ -128,6 +128,24 @@ func modeToEncodingFlag(mode string) (encodingFlag, error) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// AckPacket is generated from a ACK packet as defined in RFC 1350.
+type AckPacket struct {
+	blockNumber uint16
+}
+
+func createAckPacket(blockNumber uint16) AckPacket { // TODO unexport
+	ackPacket := AckPacket{
+		blockNumber: blockNumber,
+	}
+	return ackPacket
+}
+
+func (ackPacket AckPacket) bytes() ([]byte, error) { // TODO unexport
+	return binaryWrite(ACK, ackPacket.blockNumber)
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // DataPacket is generated from a DATA packet as defined in RFC 1350.
 type DataPacket struct {
 	blockNumber uint16
@@ -208,10 +226,8 @@ func createDataPacket(blockNumber uint16, data []byte) DataPacket {
 	return dataPacket
 }
 
-func (dataPacket DataPacket) bytes() []byte {
-	// FIXME this is where I'm leaving off for today.
-	// Write out the fields using binary.write into something for sendPacket()
-	return nil
+func (dataPacket DataPacket) bytes() ([]byte, error) {
+	return binaryWrite(DATA, dataPacket.blockNumber, dataPacket.data)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -219,10 +235,10 @@ func (dataPacket DataPacket) bytes() []byte {
 // ErrorPacket represents an Error Packet as defined in RFC 1350.
 type ErrorPacket struct {
 	tftpError
-	data []byte
+	raw []byte
 }
 
-func createErrorPacket(tftpErr tftpError) (ErrorPacket, error) {
+func createErrorPacket(tftpErr tftpError) (ErrorPacket, error) { // TODO should this use binaryWrite()?
 	size, err := errorPacketSize(tftpErr)
 	if err != nil {
 		return backupError(), err
@@ -230,9 +246,9 @@ func createErrorPacket(tftpErr tftpError) (ErrorPacket, error) {
 	data := make([]byte, 0, size)
 	buf := bytes.NewBuffer(data)
 
-	write := func(data interface{}) {
+	write := func(d interface{}) {
 		if err == nil {
-			err = binary.Write(buf, binary.BigEndian, data)
+			err = binary.Write(buf, binary.BigEndian, d)
 		}
 	}
 
@@ -248,7 +264,7 @@ func createErrorPacket(tftpErr tftpError) (ErrorPacket, error) {
 
 	pak := ErrorPacket{
 		tftpError: tftpErr,
-		data:      data,
+		raw:       data,
 	}
 
 	return pak, nil
@@ -267,7 +283,7 @@ func backupError() ErrorPacket {
 			errorCode: 0,
 			errorMsg:  errors.New("server not implemented"),
 		},
-		data: backup,
+		raw: backup,
 	}
 	return foo
 }
@@ -292,12 +308,34 @@ func (packet Packet) readOpCode() (opCode, error) {
 	return op, nil
 }
 
-func binarySize(a ...interface{}) (int, error) {
+func binaryWrite(elements ...interface{}) ([]byte, error) { // TODO make this unexported
+	size, err := binarySize(elements...)
+	if err != nil {
+		return nil, err
+	}
+	raw := make([]byte, 0, size)
+	buf := bytes.NewBuffer(raw)
+
+	write := func(d interface{}) {
+		err = binary.Write(buf, binary.BigEndian, d)
+	}
+	for _, e := range elements {
+		write(e)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func binarySize(elements ...interface{}) (int, error) { // TODO make this unexported
 	size := 0
-	for _, v := range a {
+	for _, v := range elements {
 		sz := binary.Size(v)
 		if sz == -1 {
-			msg := "binarySize: expected a fixed-size value or a slice of fixed-size values, or a pointer to such data"
+			msg := "binarySize: expected a fixed-size value or a slice of fixed-size values, or a pointer to such raw"
 			err := fmt.Errorf("%v, found %v\n", msg, v)
 			return -1, err
 		}

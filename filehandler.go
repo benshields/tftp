@@ -22,20 +22,20 @@ type openFlag int
 
 const (
 	// read is a flag to open a file in read-only mode.
-	read openFlag = openFlag(os.O_RDONLY)
+	read = openFlag(os.O_RDONLY)
 
 	// write is a flag to open a file in write-only append mode, creating it if it does not exist.
-	write openFlag = openFlag(os.O_CREATE | os.O_APPEND | os.O_WRONLY)
+	write = openFlag(os.O_CREATE | os.O_APPEND | os.O_WRONLY)
 )
 
 // encodingFlag controls encoding / decoding behavior of writing and reading to a file with a blockStreamer.
 type encodingFlag int
 
 const (
-	// netascii is a flag to handle data according to netascii as described by RFC 764.
+	// netascii is a flag to handle raw according to netascii as described by RFC 764.
 	netascii encodingFlag = iota
 
-	// octet is a flag to handle data as-is in 8-bit binary form.
+	// octet is a flag to handle raw as-is in 8-bit binary form.
 	octet
 )
 
@@ -44,7 +44,7 @@ const (
 type blockStreamer struct {
 	filename string       // filename is used to open the underlying operating system file.
 	openMode openFlag     // openMode controls which type of I/O operation will be streamed; read-only or write-only.
-	encoding encodingFlag // encoding controls whether data will be streamed as netascii or not.
+	encoding encodingFlag // encoding controls whether raw will be streamed as netascii or not.
 
 	fileReference *os.File          // fileReference will be opened and closed by the Open() & Close() calls to a blockStreamer.
 	buffer        *bufio.ReadWriter // buffer serves as the intermediary reader or writer to the fileReference.
@@ -60,7 +60,7 @@ func newBlockStreamer(filename string, openFlag openFlag, encFlag encodingFlag) 
 	return &fh
 }
 
-func (fh blockStreamer) Open() error {
+func (fh *blockStreamer) Open() error {
 	/* TODO: Implement func (fh blockStreamer) open(filename, mode string) error */
 	var err error
 	switch fh.openMode {
@@ -76,26 +76,29 @@ func (fh blockStreamer) Open() error {
 			return err
 		}
 		fh.buffer = bufio.NewReadWriter(nil, bufio.NewWriter(fh.fileReference))
+	default:
+		panic(fh.openMode)
 	}
 	return nil
 }
 
-func (fh blockStreamer) Close() error {
+func (fh *blockStreamer) Close() error {
 	if fh.openMode == write {
 		err := fh.buffer.Flush()
 		if err != nil {
 			return err
 		}
 	}
-	return fh.fileReference.Close()
+	return fh.fileReference.Close() // TODO how can I structure Close() so that the fileReference gets closed if Flush() fails
 }
 
-func (fh blockStreamer) Read(b []byte) (n int, err error) {
+func (fh *blockStreamer) Read(b []byte) (n int, err error) {
 	/* TODO: Implement func (fh blockStreamer) read() ([]byte, error) */
-	return 0, nil
+	return fh.buffer.Read(b)
 }
 
-func (fh blockStreamer) Write(b []byte) (n int, err error) {
-	/* TODO: Implement func (fh blockStreamer) write(data []byte) error */
-	return 0, nil
+func (fh *blockStreamer) Write(b []byte) (n int, err error) {
+	/* TODO: Implement func (fh blockStreamer) write(raw []byte) error */
+	//return 0, nil
+	return fh.buffer.Write(b)
 }

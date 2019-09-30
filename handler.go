@@ -8,20 +8,33 @@ package tftp
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"time"
 )
 
-type Handler struct {
+type HandlerObject struct {
+	ResponseWriter
+
 	// packetReader listens for new packets from a client.
 	packetReader *Conn
 
-	// Client is a pointer to the client being served by this handler.
-	*Client
+	// lastPacket is the last TFTP packet received from the client, used in case of re-transmission.
+	lastPacket Packet
+
+	// remoteAddr is the address at which this client can be reached.
+	remoteAddr net.Addr
+
+	// ErrorLog specifies an optional logger for errors setting
+	// connections, unexpected behavior from handlers, and
+	// underlying FileSystem errors.
+	// If nil, logging is done via the log package's standard logger.
+	ErrorLog *log.Logger // Go 1.3
 }
 
 func HandleRequest(ctx context.Context, request Packet, done chan<- error) {
-	handler := NewHandler(request)
+	handler := NewHandlerObject(request)
 	handlerFinished := handler.Start(ctx)
 	select {
 	case err := <-handlerFinished:
@@ -31,75 +44,41 @@ func HandleRequest(ctx context.Context, request Packet, done chan<- error) {
 	}
 }
 
-func NewHandler(request Packet) *Handler {
-	c := NewClient(request)
-	handler := &Handler{Client: c}
-	return handler
+func NewHandlerObject(request Packet) *HandlerObject {
+	handlerObject := &HandlerObject{
+		lastPacket: request,
+		remoteAddr: request.from,
+	}
+	return handlerObject
 }
 
-func (handler *Handler) setup() error { // setup() is an instance of Sequential coupling...
-	err := handler.setupPacketReader()
-	if err != nil {
-		return err // TODO make some error packet to return, internal server error, and log
-	}
-	err = handler.Client.setupFileHandler()
-	if err != nil {
-		return err // TODO make some error packet to return, incorrectly formed packet or fail to open file?, and log
-	}
-	return nil
-}
-
-func (handler *Handler) setupPacketReader() error {
-	//conn, err := NewConn("127.0.0.1:0") // :0 tells the OS to assign an ephemeral port
-	conn, err := NewConn(":0") // TODO this is a test
-	if err != nil {
-		return fmt.Errorf("func (handler *Handler) setupPacketReader() error:: %v", err)
-	}
-	handler.packetReader = conn
-	return nil
-}
-
-func (handler *Handler) Start(ctx context.Context) <-chan error {
+func (handlerObject *HandlerObject) Start(ctx context.Context) <-chan error {
 	done := make(chan error)
 	go func() {
-		err := handler.setup()
+		err := handlerObject.setup(ctx)
 		if err != nil {
-			// TODO send error packet
-			_ = handler.sendPacket(backupError().data) // TODO unhandled error
-			_ = handler.packetReader.rwc.Close()
-			_ = handler.Client.fileHandler.Close()
+			handlerObject.sendDefaultErrorPacket()
 			done <- err
-			// TODO call some handler cleanup func? Then dally. Any cleanup I'm forgetting? logging?
 			return
 		}
-		// TODO send first response
-		go handler.Handle(handler.lastPacket)
+
+		go handlerObject.Handle(handlerObject.lastPacket)
 
 		for {
 			ctxTimeout, _ := context.WithTimeout(ctx, 5*time.Second)
-			in := handler.packetReader.Read(ctxTimeout)
+			in := handlerObject.packetReader.Read(ctxTimeout)
 			select {
 			case packet := <-in:
-				go handler.Handle(packet) // TODO this is a dummy func
+				log.Printf("tftp: new packet received:\n\tfrom: %v\n\tdata: %v\n", packet.from, packet.data)
+				handlerObject.lastPacket = packet
+				go handlerObject.Handle(packet)
 			case <-ctx.Done(): // THE SERVER IS CLOSING
-				// TODO should I close packetReader here? Send an error packet to client?
-				// TODO call some handler cleanup func? Then dally. Any cleanup I'm forgetting? logging?
-				// TODO send error packet
-				_ = handler.sendPacket(backupError().data) // TODO unhandled error
-				_ = handler.packetReader.rwc.Close()
-				_ = handler.Client.fileHandler.Close()
-				done <- err
-				// TODO call some handler cleanup func? Then dally. Any cleanup I'm forgetting? logging?
+				handlerObject.sendDefaultErrorPacket()
+				done <- ctx.Err()
 				return
 			case <-ctxTimeout.Done(): // THE CONNECTION IS TERMINATED (SHOULD BE DALLYING)
-				// TODO should I close packetReader here? Send an error packet to client?
-				// TODO call some handler cleanup func? Then dally. Any cleanup I'm forgetting? logging?
-				// TODO send error packet
-				_ = handler.sendPacket(backupError().data) // TODO unhandled error
-				_ = handler.packetReader.rwc.Close()
-				_ = handler.Client.fileHandler.Close()
-				done <- err
-				// TODO call some handler cleanup func? Then dally. Any cleanup I'm forgetting? logging?
+				handlerObject.sendDefaultErrorPacket()
+				done <- ctx.Err()
 				return
 			}
 		}
@@ -107,24 +86,247 @@ func (handler *Handler) Start(ctx context.Context) <-chan error {
 	return done
 }
 
-func (handler *Handler) Handle(request Packet) {
-	/* TODO This is a dummy function */
-	data := make([]byte, 512)
-	n, err := handler.Client.fileHandler.Read(data)
+func (handlerObject *HandlerObject) setup(ctx context.Context) error { // setup() is an instance of Sequential coupling...
+	handlerObject.setupLogger(ctx)
+
+	err := handlerObject.setupPacketReader()
 	if err != nil {
-		_ = handler.sendPacket(backupError().data) // TODO unhandled error
+		return err // TODO make some error packet to return, internal server error, and log
 	}
-	// FIXME this is where I'm leaving off for today
-	// Implement the happy path of creating a data packet to shoot back to the client.
-	n++ // this is just to get rid of "n is unused" error
+
+	err = handlerObject.setupPacketHandler()
+	if err != nil {
+		return err // TODO make some error packet to return, incorrectly formed packet or fail to open file?, and log
+	}
+
+	return nil
+}
+
+func (handlerObject *HandlerObject) setupLogger(ctx context.Context) {
+	logger, ok := ctx.Value(LoggerContextKey).(*log.Logger)
+	if ok {
+		handlerObject.ErrorLog = logger
+	}
+}
+
+func (handlerObject *HandlerObject) setupPacketReader() error {
+	//conn, err := NewConn("127.0.0.1:0") // :0 tells the OS to assign an ephemeral port, this doesn't seem to like a mix of IPv4 & IPv6
+	conn, err := NewConn(":0") // TODO this is a test, but it seems to be working!
+	if err != nil {
+		return fmt.Errorf("func (handlerObject *HandlerObject) setupPacketReader() error:: %v", err)
+	}
+	handlerObject.packetReader = conn
+	return nil
+}
+
+func (handlerObject *HandlerObject) setupPacketHandler() error {
+	req, err := parseRequestPacket(handlerObject.lastPacket)
+	if err != nil {
+		badRequestError := fmt.Errorf("%v: error occurred while reading opcode in Request packet from %v - %v",
+			errNotDef.errorMsg.Error(), handlerObject.lastPacket.from, err)
+		return badRequestError
+	}
+
+	handler, err := newPacketHandler(req)
+	if err != nil {
+		return err
+	}
+	handlerObject.ResponseWriter = handler
+	return nil
+}
+
+func (handlerObject *HandlerObject) Handle(packet Packet) {
+	response := handlerObject.ResponseWriter.WriteResponse(packet)
+	err := handlerObject.sendPacket(response)
+	if err != nil {
+		handlerObject.sendDefaultErrorPacket()
+		handlerObject.logf("tftp: failed to send:\n\tresponse: %v\n\tdue to error: %v", response, err)
+	}
+}
+
+func (handlerObject *HandlerObject) sendDefaultErrorPacket() {
+	// TODO should I close packetReader here? Send an error packet to client?
+	// TODO call some handlerObject cleanup func? Then dally. Any cleanup I'm forgetting? logging?
+	// TODO send error packet
+	_ = handlerObject.sendPacket(backupError().raw) // TODO unhandled error
+	_ = handlerObject.packetReader.rwc.Close()
+	_ = handlerObject.ResponseWriter.Close()
+	// TODO call some handlerObject cleanup func? Then dally. Any cleanup I'm forgetting? logging?
 }
 
 // TODO this is a horrible placeholder
-func (handler *Handler) sendPacket(pak []byte) error {
-	_, err := handler.packetReader.rwc.WriteTo(pak, handler.Client.remoteAddr)
+func (handlerObject *HandlerObject) sendPacket(pak []byte) error {
+	_, err := handlerObject.packetReader.rwc.WriteTo(pak, handlerObject.remoteAddr)
 	if err != nil {
-		return fmt.Errorf("func (handler *Handler) sendPacket(pak []byte) error:: %v", err)
+		return fmt.Errorf("func (handlerObject *HandlerObject) sendPacket(pak []byte) error:: %v", err)
 	}
-	log.Printf("sendPacket():\n\tto:   %v\n\tdata: %v\n", handler.Client.remoteAddr, pak)
+	log.Printf("sendPacket():\n\tto:   %v\n\tdata: %v\n", handlerObject.remoteAddr, pak)
 	return nil
 }
+
+func (handlerObject *HandlerObject) logf(format string, args ...interface{}) {
+	if handlerObject.ErrorLog != nil {
+		handlerObject.ErrorLog.Printf(format, args...)
+	} else {
+		log.Printf(format, args...)
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type RequestHandler interface {
+	Start(ctx context.Context) <-chan error
+	ResponseWriter
+}
+
+type ResponseWriter interface {
+	WriteResponse(pak Packet) (response []byte)
+	Close() error
+}
+
+func newPacketHandler(req *RequestPacket) (ResponseWriter, error) {
+	fileHandler := newBlockStreamer(req.filename, req.openFlag, req.encodingFlag)
+	err := fileHandler.Open()
+	if err != nil {
+		return nil, err
+	}
+
+	var handler ResponseWriter
+	switch req.openFlag {
+	case read:
+		handler = newRrqResponseWriter(fileHandler)
+	case write:
+		handler = newWrqResponseWriter(fileHandler)
+	default:
+		panic(req.openFlag)
+	}
+	return handler, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type RrqResponseWriter struct {
+	// handler interfaces with the file that the client is reading from or writing to.
+	fileHandler
+}
+
+func newRrqResponseWriter(fh fileHandler) *RrqResponseWriter {
+	rrqResponseWriter := &RrqResponseWriter{
+		fileHandler: fh,
+	}
+	return rrqResponseWriter
+}
+
+func (rrqResponseWriter *RrqResponseWriter) WriteResponse(pak Packet) (response []byte) {
+	data := make([]byte, 512)
+	n, err := rrqResponseWriter.fileHandler.Read(data) // TODO I can't just call Read, it needs to be based on the correct block number
+	data = data[:n]
+	if err != nil && err != io.EOF {
+		return backupError().raw
+	}
+
+	blockNumber, err := rrqResponseWriter.nextBlockNumber(pak)
+	if err != nil { // TODO the error I received is actually useful, it should be returned
+		return backupError().raw
+	}
+
+	dataPacket := createDataPacket(blockNumber, data)
+
+	raw, err := dataPacket.bytes()
+	if err != nil {
+		return backupError().raw
+	}
+	return raw
+}
+
+func (rrqResponseWriter *RrqResponseWriter) Close() error {
+	return rrqResponseWriter.fileHandler.Close()
+}
+
+func (rrqResponseWriter *RrqResponseWriter) nextBlockNumber(pak Packet) (uint16, error) {
+	var blockNumber uint16
+	op, err := pak.readOpCode()
+	if err != nil {
+		return 0, err
+	}
+
+	switch op {
+	case RRQ:
+		blockNumber = 1
+	case ACK:
+		currentBlockNumber, err := pak.readBlockNumber()
+		blockNumber = currentBlockNumber + 1
+		if err != nil {
+			return 0, err
+		}
+	default:
+		unexpectedPacketTypeErr := errOperation.fmt("expected packet of type RRQ (Read Request) or ACK (Acknowledgement), found %v", op)
+		return 0, unexpectedPacketTypeErr
+	}
+
+	return blockNumber, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type WrqResponseWriter struct {
+	// handler interfaces with the file that the client is reading from or writing to.
+	fileHandler
+}
+
+func newWrqResponseWriter(fh fileHandler) *WrqResponseWriter {
+	wrqResponseWriter := &WrqResponseWriter{
+		fileHandler: fh,
+	}
+	return wrqResponseWriter
+}
+
+func (wrqResponseWriter *WrqResponseWriter) WriteResponse(pak Packet) (response []byte) {
+	blockNumber, err := wrqResponseWriter.nextBlockNumber(pak)
+	if err != nil {
+		return backupError().raw
+	}
+
+	if blockNumber != 0 {
+		// TODO: so right here, if the packet data is 0-511 bytes, I need to dally (keep sending final ACK in response to final DATA)
+		// TODO: In general, I just want to make sure I don't write the same data twice. So I need some block number error checking.
+		n, err := wrqResponseWriter.fileHandler.Write(pak.data) // TODO I can't just call Write, it needs to be based on the correct block number
+		if err != nil || n != len(pak.data) {                   // TODO do I really have to be measuring len here? It's probably included in the error
+			return backupError().raw
+		}
+	}
+
+	ackPacket := createAckPacket(blockNumber)
+
+	raw, err := ackPacket.bytes()
+	if err != nil {
+		return backupError().raw
+	}
+	return raw
+}
+
+func (wrqResponseWriter *WrqResponseWriter) Close() error {
+	return wrqResponseWriter.fileHandler.Close()
+}
+
+func (wrqResponseWriter *WrqResponseWriter) nextBlockNumber(pak Packet) (uint16, error) {
+	var blockNumber uint16
+	op, err := pak.readOpCode()
+
+	switch op {
+	case WRQ:
+		blockNumber = 0
+	case DATA:
+		blockNumber, err = pak.readBlockNumber()
+		if err != nil {
+			return 0, err
+		}
+	default:
+		unexpectedPacketTypeErr := errOperation.fmt("expected packet of type WRQ (Write Request) or DATA (Data), found %v", op)
+		return 0, unexpectedPacketTypeErr
+	}
+
+	return blockNumber, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
