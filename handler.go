@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"time"
 )
 
@@ -133,7 +134,15 @@ func (handlerObject *HandlerObject) setupPacketHandler() error {
 
 	handler, err := newPacketHandler(req)
 	if err != nil {
-		return err
+		if os.IsExist(err) {
+			return errFileExists
+		} else if os.IsNotExist(err) {
+			return errNoFile
+		} else {
+			fileError := fmt.Errorf("%v: error occurred while opening file in Request packet from %v - %v",
+				errNotDef.errorMsg.Error(), handlerObject.lastPacket.from, err)
+			return fileError // TODO FINDME This is where I'm leaving off, working on correct errors for opening files
+		}
 	}
 	handlerObject.ResponseWriter = handler
 	return nil

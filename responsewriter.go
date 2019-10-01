@@ -113,8 +113,13 @@ func (wrqResponseWriter *WrqResponseWriter) WriteResponse(pak Packet) (response 
 	if blockNumber != 0 {
 		// TODO: so right here, if the packet data is 0-511 bytes, I need to dally (keep sending final ACK in response to final DATA)
 		// TODO: In general, I just want to make sure I don't write the same data twice. So I need some block number error checking.
-		n, err := wrqResponseWriter.fileHandler.Write(pak.data) // TODO I can't just call Write, it needs to be based on the correct block number
-		if err != nil || n != len(pak.data) {                   // TODO do I really have to be measuring len here? It's probably included in the error
+		data, err := wrqResponseWriter.parsePacket(pak)
+		if err != nil {
+			return backupError().raw
+		}
+
+		n, err := wrqResponseWriter.fileHandler.Write(data) // TODO I can't just call Write, it needs to be based on the correct block number
+		if err != nil || n != len(data) {                   // TODO do I really have to be measuring len here? It's probably included in the error
 			return backupError().raw
 		}
 	}
@@ -150,4 +155,12 @@ func (wrqResponseWriter *WrqResponseWriter) nextBlockNumber(pak Packet) (uint16,
 	}
 
 	return blockNumber, nil
+}
+
+func (wrqResponseWriter *WrqResponseWriter) parsePacket(pak Packet) ([]byte, error) {
+	dataPacket, err := parseDataPacket(pak)
+	if err != nil {
+		return nil, err
+	}
+	return dataPacket.data, nil
 }

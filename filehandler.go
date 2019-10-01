@@ -71,7 +71,7 @@ func (fh *blockStreamer) Open() error {
 		}
 		fh.buffer = bufio.NewReadWriter(bufio.NewReader(fh.fileReference), nil)
 	case write:
-		fh.fileReference, err = os.OpenFile(fh.filename, os.O_CREATE|os.O_APPEND|os.O_WRONLY, os.ModeExclusive|os.ModeAppend)
+		fh.fileReference, err = os.OpenFile(fh.filename, os.O_CREATE|os.O_APPEND|os.O_WRONLY|os.O_EXCL, os.ModePerm)
 		if err != nil {
 			return err
 		}
@@ -93,12 +93,9 @@ func (fh *blockStreamer) Close() error {
 }
 
 func (fh *blockStreamer) Read(b []byte) (n int, err error) {
-	/* TODO: Implement func (fh blockStreamer) read() ([]byte, error) */
 	return fh.buffer.Read(b)
 }
 
 func (fh *blockStreamer) Write(b []byte) (n int, err error) {
-	/* TODO: Implement func (fh blockStreamer) write(raw []byte) error */
-	//return 0, nil
 	return fh.buffer.Write(b)
 }
