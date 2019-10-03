@@ -124,14 +124,14 @@ type AckPacket struct {
 	blockNumber uint16
 }
 
-func createAckPacket(blockNumber uint16) AckPacket { // TODO unexport
+func createAckPacket(blockNumber uint16) AckPacket {
 	ackPacket := AckPacket{
 		blockNumber: blockNumber,
 	}
 	return ackPacket
 }
 
-func (ackPacket AckPacket) bytes() ([]byte, error) { // TODO unexport
+func (ackPacket AckPacket) bytes() ([]byte, error) {
 	return binaryWrite(ACK, ackPacket.blockNumber)
 }
 
@@ -229,54 +229,61 @@ type ErrorPacket struct {
 	raw []byte
 }
 
-func createErrorPacket(tftpErr tftpError) (ErrorPacket, error) { // TODO should this use binaryWrite()?
+func createErrorPacket(tftpErr tftpError) (ErrorPacket, error) {
 	size, err := errorPacketSize(tftpErr)
 	if err != nil {
-		return backupError(), err
+		return internalErrorPacket(), err
 	}
 	data := make([]byte, 0, size)
-	buf := bytes.NewBuffer(data)
+	buffer := bytes.NewBuffer(data)
 
 	write := func(d interface{}) {
 		if err == nil {
-			err = binary.Write(buf, binary.BigEndian, d)
+			err = binary.Write(buffer, binary.BigEndian, d)
 		}
 	}
 
 	write(ERROR)
 	write(tftpErr.errorCode)
-	write(tftpErr.errorMsg)
-	write(0x00)
+	fixedLengthData := []byte(tftpErr.errorMsg.Error())
+	write(fixedLengthData)
+	write(byte(0x00))
 
 	// TODO ERROR: looks like an internal server error
 	if err != nil {
-		return backupError(), err
+		return internalErrorPacket(), err
 	}
 
 	pak := ErrorPacket{
 		tftpError: tftpErr,
-		raw:       data,
+		raw:       buffer.Bytes(),
 	}
 
 	return pak, nil
 }
 
 func errorPacketSize(err tftpError) (int, error) {
-	return binarySize(ERROR, err.errorCode, err.errorMsg, 0x00)
+	fixedLengthData := []byte(err.errorMsg.Error())
+	return binarySize(ERROR, err.errorCode, fixedLengthData, byte(0x00))
 }
 
-func backupError() ErrorPacket {
-	msg := []byte("server not implemented")
-	backup := append([]byte{0x00, 0x05, 0x00, 0x01}, msg...)
-	backup = append(backup, 0x00)
-	foo := ErrorPacket{
+func internalErrorPacket() ErrorPacket {
+	errStr := "internal server error"
+	opCode := []byte{0x00, 0x05}
+	errorCode := []byte{0x00, 0x00}
+	errMsg := []byte(errStr)
+	nullTerminator := []byte{0x00}
+
+	raw, _ := binaryWrite(opCode, errorCode, errMsg, nullTerminator)
+
+	errPak := ErrorPacket{
 		tftpError: tftpError{
 			errorCode: 0,
-			errorMsg:  errors.New("server not implemented"),
+			errorMsg:  errors.New(errStr),
 		},
-		raw: backup,
+		raw: raw,
 	}
-	return foo
+	return errPak
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -286,7 +293,7 @@ func readNetasciiString(buffer *bytes.Buffer) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	str := string(bytes.TrimRight(netasciiStr, string(0x00)))
+	str := string(bytes.TrimRight(netasciiStr, string(byte(0x00))))
 	return str, nil
 }
 
@@ -299,16 +306,16 @@ func (packet Packet) readOpCode() (opCode, error) {
 	return op, nil
 }
 
-func binaryWrite(elements ...interface{}) ([]byte, error) { // TODO make this unexported
+func binaryWrite(elements ...interface{}) ([]byte, error) {
 	size, err := binarySize(elements...)
 	if err != nil {
 		return nil, err
 	}
 	raw := make([]byte, 0, size)
-	buf := bytes.NewBuffer(raw)
+	buffer := bytes.NewBuffer(raw)
 
 	write := func(d interface{}) {
-		err = binary.Write(buf, binary.BigEndian, d)
+		err = binary.Write(buffer, binary.BigEndian, d)
 	}
 	for _, e := range elements {
 		write(e)
@@ -318,15 +325,15 @@ func binaryWrite(elements ...interface{}) ([]byte, error) { // TODO make this un
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	return buffer.Bytes(), nil
 }
 
-func binarySize(elements ...interface{}) (int, error) { // TODO make this unexported
+func binarySize(elements ...interface{}) (int, error) {
 	size := 0
 	for _, v := range elements {
 		sz := binary.Size(v)
 		if sz == -1 {
-			msg := "binarySize: expected a fixed-size value or a slice of fixed-size values, or a pointer to such raw"
+			msg := "binarySize: expected a fixed-size value or a slice of fixed-size values, or a pointer to such data"
 			err := fmt.Errorf("%v, found %v\n", msg, v)
 			return -1, err
 		}

@@ -4,6 +4,7 @@
       <w>blocksize</w>
       <w>conns</w>
       <w>netascii</w>
+      <w>opcode</w>
       <w>tftp</w>
     </words>
   </dictionary>

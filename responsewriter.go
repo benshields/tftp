@@ -1,17 +1,20 @@
 package tftp
 
-import "io"
+import (
+	"io"
+	"os"
+)
 
 type ResponseWriter interface {
 	WriteResponse(pak Packet) (response []byte)
 	Close() error
 }
 
-func newPacketHandler(req *RequestPacket) (ResponseWriter, error) {
+func newPacketHandler(req *RequestPacket) (ResponseWriter, *tftpError) {
 	fileHandler := newBlockStreamer(req.filename, req.openFlag, req.encodingFlag)
 	err := fileHandler.Open()
 	if err != nil {
-		return nil, err
+		return nil, ftpOpenFileError(err)
 	}
 
 	var handler ResponseWriter
@@ -24,6 +27,20 @@ func newPacketHandler(req *RequestPacket) (ResponseWriter, error) {
 		panic(req.openFlag)
 	}
 	return handler, nil
+}
+
+func ftpOpenFileError(err error) *tftpError {
+	if os.IsExist(err) {
+		return &errFileExists
+	} else if os.IsNotExist(err) {
+		return &errNoFile
+	} else if os.IsPermission(err) {
+		return &errAccess
+	} else {
+		msg := "error occurred while opening file - %v"
+		fileError := errNotDef.fmt(msg, err)
+		return &fileError
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -42,22 +59,32 @@ func newRrqResponseWriter(fh fileHandler) *RrqResponseWriter {
 
 func (rrqResponseWriter *RrqResponseWriter) WriteResponse(pak Packet) (response []byte) {
 	data := make([]byte, 512)
-	n, err := rrqResponseWriter.fileHandler.Read(data) // TODO I can't just call Read, it needs to be based on the correct block number
+	n, err := rrqResponseWriter.fileHandler.Read(data) // TODO#01 I can't just call Read, it needs to be based on the correct block number
+	/* TODO I bet I can do a scheme where handler deals with block num
+	if RRQ
+		bn == 1 and call read
+	else if bn == last.bn+1
+		call read
+	else if bn == last.bn
+		resend last
+	else
+		send error because it's out of order
+	*/
 	data = data[:n]
 	if err != nil && err != io.EOF {
-		return backupError().raw
+		return internalErrorPacket().raw
 	}
 
 	blockNumber, err := rrqResponseWriter.nextBlockNumber(pak)
 	if err != nil { // TODO the error I received is actually useful, it should be returned
-		return backupError().raw
+		return internalErrorPacket().raw
 	}
 
 	dataPacket := createDataPacket(blockNumber, data)
 
 	raw, err := dataPacket.bytes()
 	if err != nil {
-		return backupError().raw
+		return internalErrorPacket().raw
 	}
 	return raw
 }
@@ -107,7 +134,7 @@ func newWrqResponseWriter(fh fileHandler) *WrqResponseWriter {
 func (wrqResponseWriter *WrqResponseWriter) WriteResponse(pak Packet) (response []byte) {
 	blockNumber, err := wrqResponseWriter.nextBlockNumber(pak)
 	if err != nil {
-		return backupError().raw
+		return internalErrorPacket().raw
 	}
 
 	if blockNumber != 0 {
@@ -115,12 +142,12 @@ func (wrqResponseWriter *WrqResponseWriter) WriteResponse(pak Packet) (response 
 		// TODO: In general, I just want to make sure I don't write the same data twice. So I need some block number error checking.
 		data, err := wrqResponseWriter.parsePacket(pak)
 		if err != nil {
-			return backupError().raw
+			return internalErrorPacket().raw
 		}
 
 		n, err := wrqResponseWriter.fileHandler.Write(data) // TODO I can't just call Write, it needs to be based on the correct block number
 		if err != nil || n != len(data) {                   // TODO do I really have to be measuring len here? It's probably included in the error
-			return backupError().raw
+			return internalErrorPacket().raw
 		}
 	}
 
@@ -128,7 +155,7 @@ func (wrqResponseWriter *WrqResponseWriter) WriteResponse(pak Packet) (response 
 
 	raw, err := ackPacket.bytes()
 	if err != nil {
-		return backupError().raw
+		return internalErrorPacket().raw
 	}
 	return raw
 }

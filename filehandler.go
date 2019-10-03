@@ -86,10 +86,11 @@ func (fh *blockStreamer) Close() error {
 	if fh.openMode == write {
 		err := fh.buffer.Flush()
 		if err != nil {
+			_ = fh.fileReference.Close()
 			return err
 		}
 	}
-	return fh.fileReference.Close() // TODO how can I structure Close() so that the fileReference gets closed if Flush() fails
+	return fh.fileReference.Close() // TODO further research best practices for flush/close
 }
 
 func (fh *blockStreamer) Read(b []byte) (n int, err error) {

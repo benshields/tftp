@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"time"
 )
 
@@ -60,10 +59,10 @@ func NewHandlerObject(request Packet) *HandlerObject {
 func (handlerObject *HandlerObject) Start(ctx context.Context) <-chan error {
 	done := make(chan error)
 	go func() {
-		err := handlerObject.setup(ctx)
-		if err != nil {
-			handlerObject.sendDefaultErrorPacket()
-			done <- err
+		setupErr := handlerObject.setup(ctx)
+		if setupErr != nil {
+			handlerObject.sendErrorAndClose(*setupErr)
+			done <- setupErr
 			return
 		}
 
@@ -74,15 +73,18 @@ func (handlerObject *HandlerObject) Start(ctx context.Context) <-chan error {
 			in := handlerObject.packetReader.Read(ctxTimeout)
 			select {
 			case packet := <-in:
-				log.Printf("tftp: new packet received:\n\tfrom: %v\n\tdata: %v\n", packet.from, packet.data)
+				log.Printf("tftp: new packet received:\n\tfrom: %v\n\tdata: %v\n", packet.from, packet.data) // TODO delete
 				handlerObject.lastPacket = packet
 				go handlerObject.Handle(packet)
 			case <-ctx.Done(): // THE SERVER IS CLOSING
-				handlerObject.sendDefaultErrorPacket()
-				done <- ctx.Err()
+				tftpErr := errNotDef.fmt("server is shutting down")
+				handlerObject.sendErrorAndClose(tftpErr)
+				connectionErr := fmt.Errorf("connection's context closed with: %v", ctx.Err())
+				done <- connectionErr
 				return
-			case <-ctxTimeout.Done(): // THE CONNECTION IS TERMINATED (SHOULD BE DALLYING)
-				handlerObject.sendDefaultErrorPacket()
+			case <-ctxTimeout.Done(): // THE CONNECTION IS TERMINATED (TODO SHOULD BE DALLYING?)
+				tftpErr := errNotDef.fmt("connection timeout")
+				handlerObject.sendErrorAndClose(tftpErr)
 				done <- ctx.Err()
 				return
 			}
@@ -91,17 +93,17 @@ func (handlerObject *HandlerObject) Start(ctx context.Context) <-chan error {
 	return done
 }
 
-func (handlerObject *HandlerObject) setup(ctx context.Context) error { // setup() is an instance of Sequential coupling...
+func (handlerObject *HandlerObject) setup(ctx context.Context) *tftpError { // setup() is an instance of Sequential coupling...
 	handlerObject.setupLogger(ctx)
 
 	err := handlerObject.setupPacketReader()
 	if err != nil {
-		return err // TODO make some error packet to return, internal server error, and log
+		return err
 	}
 
 	err = handlerObject.setupPacketHandler()
 	if err != nil {
-		return err // TODO make some error packet to return, incorrectly formed packet or fail to open file?, and log
+		return err
 	}
 
 	return nil
@@ -114,35 +116,27 @@ func (handlerObject *HandlerObject) setupLogger(ctx context.Context) {
 	}
 }
 
-func (handlerObject *HandlerObject) setupPacketReader() error {
-	//conn, err := NewConn("127.0.0.1:0") // :0 tells the OS to assign an ephemeral port, this doesn't seem to like a mix of IPv4 & IPv6
-	conn, err := NewConn(":0") // TODO this is a test, but it seems to be working!
+func (handlerObject *HandlerObject) setupPacketReader() *tftpError {
+	conn, err := NewConn(":0") // :0 tells the OS to assign an ephemeral port
 	if err != nil {
-		return fmt.Errorf("func (handlerObject *HandlerObject) setupPacketReader() error:: %v", err)
+		internalServerError := errNotDef.fmt("failed to assign TID for connection")
+		return &internalServerError
 	}
 	handlerObject.packetReader = conn
 	return nil
 }
 
-func (handlerObject *HandlerObject) setupPacketHandler() error {
+func (handlerObject *HandlerObject) setupPacketHandler() *tftpError {
 	req, err := parseRequestPacket(handlerObject.lastPacket)
 	if err != nil {
-		badRequestError := fmt.Errorf("%v: error occurred while reading opcode in Request packet from %v - %v",
-			errNotDef.errorMsg.Error(), handlerObject.lastPacket.from, err)
-		return badRequestError
+		msg := "error occurred while reading opcode in Request packet from %v - %v"
+		badRequestError := errNotDef.fmt(msg, handlerObject.lastPacket.from, err)
+		return &badRequestError
 	}
 
-	handler, err := newPacketHandler(req)
-	if err != nil {
-		if os.IsExist(err) {
-			return errFileExists
-		} else if os.IsNotExist(err) {
-			return errNoFile
-		} else {
-			fileError := fmt.Errorf("%v: error occurred while opening file in Request packet from %v - %v",
-				errNotDef.errorMsg.Error(), handlerObject.lastPacket.from, err)
-			return fileError // TODO FINDME This is where I'm leaving off, working on correct errors for opening files
-		}
+	handler, openFileError := newPacketHandler(req)
+	if openFileError != nil {
+		return openFileError
 	}
 	handlerObject.ResponseWriter = handler
 	return nil
@@ -152,28 +146,57 @@ func (handlerObject *HandlerObject) Handle(packet Packet) {
 	response := handlerObject.ResponseWriter.WriteResponse(packet)
 	err := handlerObject.sendPacket(response)
 	if err != nil {
-		handlerObject.sendDefaultErrorPacket()
 		handlerObject.logf("tftp: failed to send:\n\tresponse: %v\n\tdue to error: %v", response, err)
+		handlerObject.sendDefaultErrorAndClose()
 	}
 }
 
-func (handlerObject *HandlerObject) sendDefaultErrorPacket() {
-	// TODO should I close packetReader here? Send an error packet to client?
-	// TODO call some handlerObject cleanup func? Then dally. Any cleanup I'm forgetting? logging?
-	// TODO send error packet
-	_ = handlerObject.sendPacket(backupError().raw) // TODO unhandled error
-	_ = handlerObject.packetReader.rwc.Close()
-	_ = handlerObject.ResponseWriter.Close()
-	// TODO call some handlerObject cleanup func? Then dally. Any cleanup I'm forgetting? logging?
+func (handlerObject *HandlerObject) sendDefaultErrorAndClose() {
+	handlerObject.sendErrorAndClose(internalErrorPacket().tftpError)
 }
 
-// TODO this is a horrible placeholder
+func (handlerObject *HandlerObject) sendErrorAndClose(tftpErr tftpError) {
+	rawErrorData := handlerObject.getRawErrorData(tftpErr)
+	err := handlerObject.sendPacket(rawErrorData)
+	if err != nil {
+		handlerObject.logf("tftp: error sending error packet to client - %v", err)
+	}
+
+	err = handlerObject.close()
+	if err != nil {
+		handlerObject.logf("tftp: error closing client handler - %v", err)
+	}
+}
+
+func (handlerObject *HandlerObject) getRawErrorData(tftpErr tftpError) []byte {
+	pak, err := createErrorPacket(tftpErr)
+	if err != nil {
+		handlerObject.logf("tftp: error creating error packet - %v", err)
+		return internalErrorPacket().raw
+	} else {
+		return pak.raw
+	}
+}
+
+func (handlerObject *HandlerObject) close() error {
+	packetReaderErr := handlerObject.packetReader.rwc.Close()
+	var responseWriterErr error
+	if handlerObject.ResponseWriter != nil {
+		responseWriterErr = handlerObject.ResponseWriter.Close()
+	}
+
+	if packetReaderErr != nil {
+		return packetReaderErr
+	}
+	return responseWriterErr
+}
+
 func (handlerObject *HandlerObject) sendPacket(pak []byte) error {
 	_, err := handlerObject.packetReader.rwc.WriteTo(pak, handlerObject.remoteAddr)
 	if err != nil {
-		return fmt.Errorf("func (handlerObject *HandlerObject) sendPacket(pak []byte) error:: %v", err)
+		return err
 	}
-	log.Printf("sendPacket():\n\tto:   %v\n\tdata: %v\n", handlerObject.remoteAddr, pak)
+	log.Printf("sendPacket():\n\tto:   %v\n\tdata: %v\n", handlerObject.remoteAddr, pak) // TODO delete
 	return nil
 }
 

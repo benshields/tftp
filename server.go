@@ -65,7 +65,6 @@ func (srv *Server) setup() error { // setup() is an instance of Sequential coupl
 	}
 
 	srv.initializeLogger()
-
 	return nil
 }
 
